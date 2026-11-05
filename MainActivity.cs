@@ -71,6 +71,20 @@ namespace WinPlayInstaller
         // ---- 程序清单 / 目录映射（数据层见 AppCatalog、RecentStore）----
         CheckBox _forceScriptChk;                        // 「强制脚本方式运行」勾选框，步骤4 在工具页创建
         List<AppEntry> _catalog = new List<AppEntry>();   // 最近一次加载的程序清单，供 ⑦ 按钮回退使用
+
+        CheckBox _debugChk;                                  // 「详细日志」勾选框
+        List<RecentEntry> _recents = new List<RecentEntry>(); // 最近使用列表（界面副本）
+
+        LinearLayout _listCatalog;      // 清单列表容器
+        LinearLayout _listRecent;       // 最近使用列表容器
+        LinearLayout _mountList;        // 目录映射行容器
+        TextView _mountHint;            // 映射状态提示
+        TextView _catalogPathHint;      // 清单文件路径提示
+        TextView _recentPathHint;       // 最近使用文件路径提示
+        ScrollView _logScroll;          // 日志滚动容器（Log 自动滚底依赖）
+        int _pendingMountLetter = -1;   // 正在添加映射的盘符字符（选目录回调时用）
+        const int TreeRequest = 43;     // 目录树选择请求码
+
         string _driveC; // 引擎容器根目录（按机型探测，见 ResolveDriveAsync）
         string _winePath; // 引擎 wine 可执行路径（OS3/OS4 探测，见 GetWinePathAsync）
         string _prefix; // 引擎 WINEPREFIX（drive_c 上级）
