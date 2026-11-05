@@ -180,6 +180,11 @@ namespace WinPlayInstaller
             tipFix.SetTextColor(Color.Rgb(140, 90, 0));
             pTools.AddView(tipFix);
 
+            // ---- 工具页底部：目录映射 + 诊断开关 ----
+            // 这两个方法内部会创建 _forceScriptChk 与 _debugChk，是启动流程的前置依赖
+            BuildMountsSection(pTools);
+            BuildDebugSection(pTools);
+
             // ---- 页 3：日志与反馈 ----
             var pLog = new LinearLayout(this) { Orientation = Orientation.Vertical };
             var exportBtn = new Button(this) { Text = "⑩ 导出详细日志（含 root 通信/wine 调用全过程）" };
@@ -203,8 +208,16 @@ namespace WinPlayInstaller
 
             // ---- 页面容器（滚动，键盘弹出可滚）----
             var pages = new LinearLayout(this) { Orientation = Orientation.Vertical, LayoutParameters = new LinearLayout.LayoutParams(-1, -2) };
-            pages.AddView(pInstall); pages.AddView(pTools); pages.AddView(pLog);
+            // ---- 页 4：程序清单 / 页 5：最近使用 ----
+            var pApps = new LinearLayout(this) { Orientation = Orientation.Vertical };
+            BuildAppsPage(pApps);
+            var pRecent = new LinearLayout(this) { Orientation = Orientation.Vertical };
+            BuildRecentPage(pRecent);
+
+            pages.AddView(pInstall); pages.AddView(pTools); pages.AddView(pApps); pages.AddView(pRecent); pages.AddView(pLog);
             pTools.Visibility = Android.Views.ViewStates.Gone;
+            pApps.Visibility = Android.Views.ViewStates.Gone;
+            pRecent.Visibility = Android.Views.ViewStates.Gone;
             pLog.Visibility = Android.Views.ViewStates.Gone;
             var contentScroll = new ScrollView(this) { LayoutParameters = new LinearLayout.LayoutParams(-1, 0, 1f), FillViewport = true };
             // 关掉边缘拉伸光效与滚动条，让手指拖动更跟手；过度滚动会把一次惯性滑动提前截断
@@ -216,10 +229,11 @@ namespace WinPlayInstaller
 
             // ---- 底部导航栏（Bottom Navigation）----
             var navRow = new LinearLayout(this) { Orientation = Orientation.Horizontal, LayoutParameters = new LinearLayout.LayoutParams(-1, Dp(88)) };
-            var tabDef = new[] { new[] { "📦", "安装" }, new[] { "🧰", "工具" }, new[] { "📋", "日志与反馈" } };
-            var tabViews = new (LinearLayout root, TextView label)[3];
+            // 5 个 tab 文案必须短：navRow 高度固定 Dp(88)，长文案会被截断
+            var tabDef = new[] { new[] { "📦", "安装" }, new[] { "🧰", "工具" }, new[] { "🗂", "清单" }, new[] { "🕘", "最近" }, new[] { "📋", "日志" } };
+            var tabViews = new (LinearLayout root, TextView label)[5];
             Color active = Color.Rgb(37, 99, 235), inactive = Color.Gray;
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < 5; i++)
             {
                 var item = new LinearLayout(this) { Orientation = Orientation.Vertical, LayoutParameters = new LinearLayout.LayoutParams(0, -1, 1f) };
                 try { item.SetGravity(Android.Views.GravityFlags.Center); } catch { }
@@ -233,15 +247,21 @@ namespace WinPlayInstaller
             void SelectTab(int idx)
             {
                 pInstall.Visibility = idx == 0 ? Android.Views.ViewStates.Visible : Android.Views.ViewStates.Gone;
-                pTools.Visibility = idx == 1 ? Android.Views.ViewStates.Visible : Android.Views.ViewStates.Gone;
-                pLog.Visibility = idx == 2 ? Android.Views.ViewStates.Visible : Android.Views.ViewStates.Gone;
-                for (int i = 0; i < 3; i++)
+                pTools.Visibility   = idx == 1 ? Android.Views.ViewStates.Visible : Android.Views.ViewStates.Gone;
+                pApps.Visibility    = idx == 2 ? Android.Views.ViewStates.Visible : Android.Views.ViewStates.Gone;
+                pRecent.Visibility  = idx == 3 ? Android.Views.ViewStates.Visible : Android.Views.ViewStates.Gone;
+                pLog.Visibility     = idx == 4 ? Android.Views.ViewStates.Visible : Android.Views.ViewStates.Gone;
+                for (int i = 0; i < 5; i++)
                     tabViews[i].label.SetTextColor(i == idx ? active : inactive);
 
-                // 三个页面共用一个 ScrollView，不重置会停在上一页的滚动位置、看起来像内容丢失
+                // 五个页面共用一个 ScrollView，不重置会停在上一页的滚动位置、看起来像内容丢失
                 contentScroll.ScrollTo(0, 0);
+
+                // 切到清单/最近页时重新读盘，避免展示过期数据
+                if (idx == 2) _ = RefreshCatalogAsync();
+                if (idx == 3) _ = RefreshRecentAsync();
             }
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < 5; i++)
             {
                 var idx = i;
                 tabViews[i].root.Clickable = true;
@@ -357,6 +377,13 @@ namespace WinPlayInstaller
                 _autoBtn.Enabled = true;
                 _wizardBtn.Enabled = true;
                 _zipBtn.Enabled = dn.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
+
+                // 便携版 exe 不需要安装：直接填入⑤，让 ⑥⑦ 立即可用，避免被 ② 的 /S 当成安装器
+                if (dn.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                {
+                    _mainExe.Text = ToDosPath(_pickedSharePath);
+                    Log("检测到 exe：已填入主程序路径，可直接点 ⑦ 启动（无需安装）");
+                }
             }
             catch (Exception ex) { Log("保存文件失败：" + ex.Message); }
         }
