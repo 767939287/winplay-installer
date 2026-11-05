@@ -107,6 +107,29 @@ namespace WinPlayInstaller
             pickBtn.Click += (s, e) => PickFile();
             pInstall.AddView(pickBtn);
 
+            _launchBtn = new Button(this) { Text = "② 运行 exe（工作目录 = exe 所在文件夹）" };
+            _launchBtn.Click += async (s, e) =>
+            {
+                var p = GetMainPath();
+                if (!string.IsNullOrWhiteSpace(p))
+                {
+                    // 有路径就直接按「便携版」方式运行：工作目录自动取 exe 所在文件夹，无需先解压/安装
+                    await LaunchEntryAsync(new AppEntry { Name = _name.Text?.Trim(), Exe = p });
+                    return;
+                }
+
+                // 输入框为空：回退到清单第一项 / 最近使用第一项，避免用户被逼回安装页粘路径
+                var fallback = _catalog.Count > 0 ? _catalog[0] : null;
+                if (fallback == null && RecentStore.Cached.Count > 0) fallback = RecentStore.Cached[0].ToAppEntry();
+                if (fallback != null)
+                {
+                    Log("输入框为空，改用清单项：" + fallback.DisplayName);
+                    await LaunchEntryAsync(fallback);
+                }
+                else Log("请填写主程序路径，或在「程序清单」页选择一项。");
+            };
+            pInstall.AddView(_launchBtn);
+
             _name = new EditText(this) { Hint = "名称（快捷方式显示名）" };
             pInstall.AddView(_name);
 
@@ -130,35 +153,13 @@ namespace WinPlayInstaller
             pInstall.AddView(_zipBtn);
             _zipBtn.Visibility = Android.Views.ViewStates.Gone;
 
-            _mainExe = new EditText(this) { Hint = "⑤ 主程序路径（选择后自动填入，也可手改）", TextSize = 13f };
+            _mainExe = new EditText(this) { Hint = "③ 主程序路径（选择后自动填入，也可手改）", TextSize = 13f };
             pInstall.AddView(_mainExe);
 
-            _shortcutBtn = new Button(this) { Text = "⑥ 创建桌面快捷方式", Enabled = false };
+            _shortcutBtn = new Button(this) { Text = "④ 创建桌面快捷方式", Enabled = false };
             _shortcutBtn.Click += (s, e) => _ = CreateShortcutAsync(_name.Text?.Trim(), GetMainPath());
             pInstall.AddView(_shortcutBtn);
 
-            _launchBtn = new Button(this) { Text = "⑦ 直接启动（工作目录 = exe 所在文件夹）" };
-            _launchBtn.Click += async (s, e) =>
-            {
-                var p = GetMainPath();
-                if (!string.IsNullOrWhiteSpace(p))
-                {
-                    // 有路径就直接按「便携版」方式运行：工作目录自动取 exe 所在文件夹，无需先解压/安装
-                    await LaunchEntryAsync(new AppEntry { Name = _name.Text?.Trim(), Exe = p });
-                    return;
-                }
-
-                // 输入框为空：回退到清单第一项 / 最近使用第一项，避免用户被逼回安装页粘路径
-                var fallback = _catalog.Count > 0 ? _catalog[0] : null;
-                if (fallback == null && RecentStore.Cached.Count > 0) fallback = RecentStore.Cached[0].ToAppEntry();
-                if (fallback != null)
-                {
-                    Log("输入框为空，改用清单项：" + fallback.DisplayName);
-                    await LaunchEntryAsync(fallback);
-                }
-                else Log("请填写主程序路径，或在「程序清单」页选择一项。");
-            };
-            pInstall.AddView(_launchBtn);
 
             _pathInput = new EditText(this) { Hint = "①-备 直接输入安装包路径（选择器不可用时，如 /sdcard/Download/app.exe）", TextSize = 13f };
             pInstall.AddView(_pathInput);
@@ -301,8 +302,9 @@ namespace WinPlayInstaller
             _mainExe.TextChanged += (s, e) =>
             {
                 bool ok = !string.IsNullOrWhiteSpace(_mainExe.Text);
-                _shortcutBtn.Enabled = ok;
-                _launchBtn.Enabled = ok;
+                _shortcutBtn.Enabled = ok;   // ④ 建快捷方式必须有路径
+                // ② 不再跟着禁用：它有空路径回退（清单第一项/最近使用第一项），
+                // 禁用会让那条分支永远不可达
             };
 
             RootShell.OnLog = m => LogStore.Add(m);
@@ -365,13 +367,13 @@ namespace WinPlayInstaller
             var uri = data.Data;
             var dn = QueryDisplayName(uri) ?? "setup.bin";
 
-            // 优先把 SAF URI 还原成真实路径：内部存储/SD 卡能还原就直接用原位置运行，
-            // 不复制、不占额外空间，游戏目录结构也保持不变。
-            // FileAccess.Exists 是同步阻塞调用（可能走 root），此处接受一次性开销。
-            var realPath = TreeUriToPath(uri);
+            // 优先还原真实路径：能还原就直接用原位置运行，不复制、不占额外空间。
+            // 此处不做文件系统校验——FileAccess.Exists 会同步走 su 冻结界面，
+            // System.IO.File.Exists 又受 MANAGE_EXTERNAL_STORAGE 授权影响会误判。
+            // 路径真实性交给 LaunchEntryAsync 启动时校验。
+            var realPath = DocumentUriToPath(uri);
             if (dn.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-                && !string.IsNullOrEmpty(realPath)
-                && FileAccess.Exists(realPath))
+                && !string.IsNullOrEmpty(realPath))
             {
                 _pickedSharePath = realPath;
                 _pickedName = Regex.Replace(dn, @"\.(exe|msi|zip)$", "", RegexOptions.IgnoreCase);
@@ -382,6 +384,7 @@ namespace WinPlayInstaller
             }
 
             // 还原失败（网盘/云文档等 provider）才回退到复制到 Download
+            Log("⚠ 该来源无法直接读取原路径，已复制到 Download（云盘/网盘常见）");
             try
             {
                 var values = new ContentValues();
@@ -1614,6 +1617,51 @@ echo __WINE_EXIT=$RC
             catch (Exception ex)
             {
                 Log("解析目录 URI 失败：" + ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// 把单文件 document URI 还原成文件系统路径。
+        /// 单文件 URI 的 LastPathSegment 形如 "document:primary%3A..."，按冒号切分会误判卷名，
+        /// 因此必须用 DocumentsContract 取 docId。
+        /// </summary>
+        /// <param name="uri">文件选择器返回的 document URI。</param>
+        /// <returns>真实路径，如 /storage/emulated/0/galgame/x/y.exe；无法解析时返回 null。</returns>
+        string DocumentUriToPath(Android.Net.Uri uri)
+        {
+            try
+            {
+                string docId = null;
+                try { docId = Android.Providers.DocumentsContract.GetDocumentId(uri); }
+                catch { /* 非 documents provider（媒体库等）会抛异常，回退到 LastPathSegment */ }
+                if (string.IsNullOrEmpty(docId)) docId = uri.LastPathSegment;
+                if (string.IsNullOrEmpty(docId)) return null;
+
+                // raw: 前缀表示 docId 本身就是绝对路径
+                if (docId.StartsWith("raw:", StringComparison.OrdinalIgnoreCase)) return docId.Substring(4);
+
+                var idx = docId.IndexOf(':');
+                if (idx <= 0) return null;
+
+                var volume = docId.Substring(0, idx);
+                var relative = docId.Substring(idx + 1);
+
+                // 这些不是真实卷名，说明该 provider 不提供文件系统路径
+                if (volume.Equals("document", StringComparison.OrdinalIgnoreCase)
+                    || volume.Equals("msf", StringComparison.OrdinalIgnoreCase)
+                    || volume.Equals("downloads", StringComparison.OrdinalIgnoreCase))
+                    return null;
+
+                var root = volume.Equals("primary", StringComparison.OrdinalIgnoreCase)
+                    ? "/storage/emulated/0"
+                    : "/storage/" + volume;
+
+                return string.IsNullOrEmpty(relative) ? root : root + "/" + relative;
+            }
+            catch (Exception ex)
+            {
+                Log("解析文件 URI 失败：" + ex.Message);
                 return null;
             }
         }
