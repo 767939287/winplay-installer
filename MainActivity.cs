@@ -103,7 +103,7 @@ namespace WinPlayInstaller
 
             // ---- 页 1：安装 ----
             var pInstall = new LinearLayout(this) { Orientation = Orientation.Vertical };
-            var pickBtn = new Button(this) { Text = "① 选择 安装包（exe / msi / zip）" };
+            var pickBtn = new Button(this) { Text = "① 选择 exe（直接从原位置运行）" };
             pickBtn.Click += (s, e) => PickFile();
             pInstall.AddView(pickBtn);
 
@@ -112,27 +112,32 @@ namespace WinPlayInstaller
 
             _quietArgs = new EditText(this) { Hint = "静默参数（留空 = 按安装器类型自动决定）", Text = "", TextSize = 13f };
             pInstall.AddView(_quietArgs);
+            // 不再需要静默参数：安装流程已隐藏，只保留直接启动
+            _quietArgs.Visibility = Android.Views.ViewStates.Gone;
 
             _autoBtn = new Button(this) { Text = "② 自动安装 + 创建快捷方式（root，首选）", Enabled = false };
             _autoBtn.Click += (s, e) => _ = RunAutoInstall();
             pInstall.AddView(_autoBtn);
+            _autoBtn.Visibility = Android.Views.ViewStates.Gone;   // 安装流程已隐藏，保留代码便于日后恢复
 
             _wizardBtn = new Button(this) { Text = "③ 引擎图形安装向导（静默失败时用）", Enabled = false };
             _wizardBtn.Click += (s, e) => LaunchWizard();
             pInstall.AddView(_wizardBtn);
+            _wizardBtn.Visibility = Android.Views.ViewStates.Gone;
 
             _zipBtn = new Button(this) { Text = "④ zip 便携版解压到容器（免安装绿色软件）", Enabled = false };
             _zipBtn.Click += (s, e) => _ = RunZipExtract();
             pInstall.AddView(_zipBtn);
+            _zipBtn.Visibility = Android.Views.ViewStates.Gone;
 
-            _mainExe = new EditText(this) { Hint = "⑤ 主程序路径（自动识别；可改，如 C:\\VSCode\\Code.exe）", TextSize = 13f };
+            _mainExe = new EditText(this) { Hint = "⑤ 主程序路径（选择后自动填入，也可手改）", TextSize = 13f };
             pInstall.AddView(_mainExe);
 
             _shortcutBtn = new Button(this) { Text = "⑥ 创建桌面快捷方式", Enabled = false };
             _shortcutBtn.Click += (s, e) => _ = CreateShortcutAsync(_name.Text?.Trim(), GetMainPath());
             pInstall.AddView(_shortcutBtn);
 
-            _launchBtn = new Button(this) { Text = "⑦ 直接启动（工作目录 = exe 所在文件夹）", Enabled = false };
+            _launchBtn = new Button(this) { Text = "⑦ 直接启动（工作目录 = exe 所在文件夹）" };
             _launchBtn.Click += async (s, e) =>
             {
                 var p = GetMainPath();
@@ -157,10 +162,12 @@ namespace WinPlayInstaller
 
             _pathInput = new EditText(this) { Hint = "①-备 直接输入安装包路径（选择器不可用时，如 /sdcard/Download/app.exe）", TextSize = 13f };
             pInstall.AddView(_pathInput);
+            _pathInput.Visibility = Android.Views.ViewStates.Gone;   // 手输安装包路径已不再需要
 
             var pathBtn = new Button(this) { Text = "用上面路径安装" };
             pathBtn.Click += (s, e) => _ = InstallByPath();
             pInstall.AddView(pathBtn);
+            pathBtn.Visibility = Android.Views.ViewStates.Gone;
 
             // ---- 页 2：工具 ----
             var pTools = new LinearLayout(this) { Orientation = Orientation.Vertical };
@@ -357,6 +364,24 @@ namespace WinPlayInstaller
 
             var uri = data.Data;
             var dn = QueryDisplayName(uri) ?? "setup.bin";
+
+            // 优先把 SAF URI 还原成真实路径：内部存储/SD 卡能还原就直接用原位置运行，
+            // 不复制、不占额外空间，游戏目录结构也保持不变。
+            // FileAccess.Exists 是同步阻塞调用（可能走 root），此处接受一次性开销。
+            var realPath = TreeUriToPath(uri);
+            if (dn.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrEmpty(realPath)
+                && FileAccess.Exists(realPath))
+            {
+                _pickedSharePath = realPath;
+                _pickedName = Regex.Replace(dn, @"\.(exe|msi|zip)$", "", RegexOptions.IgnoreCase);
+                if (string.IsNullOrWhiteSpace(_name.Text)) _name.Text = _pickedName;
+                _mainExe.Text = ToDosPath(realPath);
+                Log($"已选择：{dn} → 将直接从 {realPath} 运行");
+                return;
+            }
+
+            // 还原失败（网盘/云文档等 provider）才回退到复制到 Download
             try
             {
                 var values = new ContentValues();
@@ -769,49 +794,15 @@ echo __WINE_EXIT=$RC
         }
 
         /// <summary>
-        /// 把所有目录映射写入 wine 的 dosdevices，使容器内真正出现对应盘符（需要 root）。
-        /// 每次启动前都必须执行：引擎重建容器时会把软链冲掉。
+        /// 盘符软链在真机上不可靠：引擎每次重建容器都会冲掉，且依赖 _prefix 探测与 root 授权。
+        /// 因此不再创建 dosdevices 链接，只保留 <see cref="ApplyMountsToUnix"/> 的路径重写。
         /// </summary>
-        async Task ApplyMountsAsync()
+        /// <returns>已完成的空任务，保持调用方 <c>await</c> 写法不变。</returns>
+        Task ApplyMountsAsync()
         {
-            var mounts = AppCatalog.Mounts;
-            if (mounts == null || mounts.Count == 0) return;
-
-            if (!_haveRoot)
-            {
-                // 无 root 时盘符映射做不了，但路径重写仍然有效，功能不中断
-                Log("[mounts] 无 root，跳过盘符映射（仅做路径重写）");
-                return;
-            }
-
-            await ResolveDriveAsync();                                   // 确保 _prefix 已探测
-            var prefix = _prefix ?? EngineFiles + "/prefix";
-            var lines = new List<string>();
-
-            foreach (var m in mounts)
-            {
-                var letter = m.Letter();
-                if (letter.Length != 1) continue;
-                var target = (m.AndroidPath ?? "").TrimEnd('/');
-                // wine 里的盘符就是一个指向真实目录的符号链接；-n 保证已存在时原地替换
-                var cmd = $"ln -sfn \"{target}\" \"{prefix}/dosdevices/{letter}:\"";
-                lines.Add(cmd);
-                DLog("[mounts] " + cmd);
-            }
-
-            if (lines.Count == 0) return;
-            lines.Add($"ls -l \"{prefix}/dosdevices/\"");
-
-            var r = await RootShell.ExecScriptAsync(lines);
-            if (r.Ok)
-            {
-                Log("✔ 盘符映射已应用（" + mounts.Count + " 条）");
-                if (AppCatalog.Debug && !string.IsNullOrWhiteSpace(r.Output)) Log("[mounts] dosdevices:\n" + r.Output.Trim());
-            }
-            else
-            {
-                Log("盘符映射失败：" + (r.Error ?? "").Trim());
-            }
+            if (AppCatalog.Mounts.Count > 0)
+                DLog("[mounts] 已跳过盘符软链，仅使用路径重写（" + AppCatalog.Mounts.Count + " 条映射）");
+            return Task.CompletedTask;
         }
 
         /// <summary>解析实际生效的语言：项 lang → defaultLang → zh_CN.UTF-8。</summary>
@@ -1271,7 +1262,7 @@ echo __WINE_EXIT=$RC
             title.SetTextColor(Color.Rgb(30, 80, 160));
             host.AddView(title);
 
-            var sub = new TextView(this) { Text = "容器盘符 → Android 实际目录（写入 dosdevices，需要 root）", TextSize = 11f };
+            var sub = new TextView(this) { Text = "容器盘符 → Android 实际目录（仅做路径重写，不需要 root）", TextSize = 11f };
             sub.SetTextColor(Color.Gray);
             host.AddView(sub);
 
@@ -1436,9 +1427,7 @@ echo __WINE_EXIT=$RC
             {
                 _mountList.AddView(MakeTip("暂无映射，点下方「＋ 添加映射」。"));
                 if (_mountHint != null)
-                    _mountHint.Text = _haveRoot
-                        ? "未配置映射；D: 默认已指向 /sdcard。"
-                        : "无 root：映射不会生效，仅做路径重写。";
+                    _mountHint.Text = "映射只影响路径翻译，游戏内不会出现对应盘符。";
                 return;
             }
 
@@ -1468,7 +1457,7 @@ echo __WINE_EXIT=$RC
             }
 
             if (_mountHint != null)
-                _mountHint.Text = _haveRoot ? "点盘符按钮可立即重新应用；✕ 删除。" : "无 root：映射不会生效（仅路径重写）。";
+                _mountHint.Text = "映射只影响路径翻译，点盘符按钮可重新应用；✕ 删除。";
         }
 
         /// <summary>保存映射配置到清单文件并立刻应用盘符。</summary>
