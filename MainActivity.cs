@@ -1057,6 +1057,9 @@ echo __WINE_EXIT=$RC
 
         static string ToDosPath(string unixPath)
         {
+            // /storage/emulated/0 与 /sdcard 指向同一位置，HyperOS 的 GetDocumentId 返回前者
+            if (unixPath.StartsWith("/storage/emulated/0/"))
+                return "D:\\" + unixPath.Substring(20).Replace('/', '\\');
             if (unixPath.StartsWith("/sdcard/")) return "D:\\" + unixPath.Substring(8).Replace('/', '\\');
             return "C:\\" + unixPath.TrimStart('/').Replace('/', '\\');
         }
@@ -1463,11 +1466,24 @@ echo __WINE_EXIT=$RC
                 _mountHint.Text = "映射只影响路径翻译，点盘符按钮可重新应用；✕ 删除。";
         }
 
-        /// <summary>保存映射配置到清单文件并立刻应用盘符。</summary>
+        /// <summary>保存清单并重新应用目录映射；顺带在后台校验映射目录可访问性。</summary>
         /// <returns>保存与应用完成的任务。</returns>
         async Task SaveAndApplyMountsAsync()
         {
             await AppCatalog.SaveAsync(_catalog);
+
+            // 可访问性校验放后台线程：FileAccess.Exists 会同步走 su，直接在 UI 线程调用会冻结界面
+            string bad = null;
+            await Task.Run(() =>
+            {
+                foreach (var m in AppCatalog.Mounts)
+                {
+                    if (string.IsNullOrWhiteSpace(m.AndroidPath)) continue;
+                    if (!FileAccess.Exists(m.AndroidPath)) { bad = m.AndroidPath; break; }
+                }
+            });
+            if (bad != null) Log("⚠ 目录不可访问（未授权或被系统限制）：" + bad);
+
             RebuildMountRows();
             await ApplyMountsAsync();
         }
@@ -1569,7 +1585,7 @@ echo __WINE_EXIT=$RC
             catch (Exception ex) { Log("打开目录选择器失败：" + ex.Message); }
         }
 
-        /// <summary>处理目录树选择结果：转成真实路径、校验可访问后写入映射。</summary>
+        /// <summary>处理目录树选择结果：转成真实路径后写入映射（可访问性校验在 SaveAndApplyMountsAsync 中异步执行）。</summary>
         /// <param name="uri">系统返回的 content:// 目录树 URI。</param>
         void OnTreePicked(Android.Net.Uri uri)
         {
@@ -1580,12 +1596,8 @@ echo __WINE_EXIT=$RC
                 return;
             }
 
-            // 立即校验可读性：避免配好了到启动时才发现目录根本进不去
-            if (!FileAccess.Exists(path))
-            {
-                Log("目录不可访问（未授权或被系统限制）：" + path);
-                return;
-            }
+            // 可读性校验延后到 SaveAndApplyMountsAsync（那里放后台线程），
+            // 避免在此同步走 su 冻结界面
 
             var letter = _pendingMountLetter > 0 ? ((char)_pendingMountLetter).ToString() + ":" : "E:";
             AppCatalog.Mounts.Add(new MountEntry { Drive = letter, AndroidPath = path });
