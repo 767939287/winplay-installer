@@ -88,6 +88,8 @@
 
 ## 构建
 
+> 本机没有 Android 编译环境？见 [搭建本机 Android 编译环境](BUILD-ENV.md)（含 4 件依赖的安装命令与常见报错对照）。
+
 ```bash
 dotnet build -c Release
 # 产物: bin/Release/net10.0-android/com.winplay.installer-Signed.apk
