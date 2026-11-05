@@ -1513,7 +1513,7 @@ echo __WINE_EXIT=$RC
 
         /// <summary>处理目录树选择结果：转成真实路径、校验可访问后写入映射。</summary>
         /// <param name="uri">系统返回的 content:// 目录树 URI。</param>
-        void OnTreePicked(Uri uri)
+        void OnTreePicked(Android.Net.Uri uri)
         {
             var path = TreeUriToPath(uri);
             if (string.IsNullOrWhiteSpace(path))
@@ -1538,7 +1538,7 @@ echo __WINE_EXIT=$RC
         /// <summary>把 externalstorage 目录树 URI 转成文件系统路径，如 primary:Games → /storage/emulated/0/Games。</summary>
         /// <param name="uri">目录树 URI。</param>
         /// <returns>真实路径；无法解析时返回 null。</returns>
-        string TreeUriToPath(Uri uri)
+        string TreeUriToPath(Android.Net.Uri uri)
         {
             try
             {
@@ -1608,7 +1608,7 @@ echo __WINE_EXIT=$RC
             try
             {
                 var intent = new Intent(Android.Provider.Settings.ActionManageAllFilesAccessPermission,
-                    Uri.Parse("package:" + PackageName));
+                    Android.Net.Uri.Parse("package:" + PackageName));
                 StartActivity(intent);
             }
             catch (Exception ex) { Log("打开授权页失败：" + ex.Message); }
