@@ -110,7 +110,7 @@ namespace WinPlayInstaller
             _name = new EditText(this) { Hint = "名称（快捷方式显示名）" };
             pInstall.AddView(_name);
 
-            _quietArgs = new EditText(this) { Hint = "静默参数（NSIS 默认 /S，不用改）", Text = "/S", TextSize = 13f };
+            _quietArgs = new EditText(this) { Hint = "静默参数（留空 = 按安装器类型自动决定）", Text = "", TextSize = 13f };
             pInstall.AddView(_quietArgs);
 
             _autoBtn = new Button(this) { Text = "② 自动安装 + 创建快捷方式（root，首选）", Enabled = false };
@@ -411,7 +411,8 @@ namespace WinPlayInstaller
         {
             if (_pickedSharePath == null) return;
             var name = string.IsNullOrWhiteSpace(_name.Text) ? _pickedName : _name.Text.Trim();
-            var quiet = string.IsNullOrWhiteSpace(_quietArgs.Text) ? "/S" : _quietArgs.Text.Trim();
+            // 不再回落 /S：参数该由安装器类型决定，用户没填就不预设
+            var quiet = (_quietArgs.Text ?? "").Trim();
 
             Log("→ 开始自动安装：" + name);
             if (!_haveRoot) { Log("✕ 自动安装需要 root（见上方说明），可改用③图形向导。"); return; }
@@ -468,8 +469,10 @@ namespace WinPlayInstaller
             }
             else if (type == "NSIS")
             {
-                Log($"   NSIS 静默安装（{quiet}）…");
-                var rr = await RunWineAsync($"{dosSafe} {quiet}");
+                // NSIS 的标准静默参数就是 /S：用户没填时由类型补上，而不是界面预设
+                var nsisArgs = string.IsNullOrEmpty(quiet) ? "/S" : quiet;
+                Log($"   NSIS 静默安装（{nsisArgs}）…");
+                var rr = await RunWineAsync($"{dosSafe} {nsisArgs}");
                 ok = rr.Output.Contains("__WINE_EXIT=0"); detail = rr.Output + rr.Error;
             }
             else if (type == "INNO")
@@ -480,7 +483,10 @@ namespace WinPlayInstaller
             }
             else
             {
-                var rr = await RunWineAsync($"{dosSafe} {quiet}");
+                // 类型未识别：不预设 /S（Inno/MSI 之外的安装器大多不认它，强加会导致装不上）
+                var rawArgs = string.IsNullOrEmpty(quiet) ? dosSafe : dosSafe + " " + quiet;
+                Log(string.IsNullOrEmpty(quiet) ? "   未识别安装器类型，直接运行（未附加参数）…" : $"   未识别类型，附加参数（{quiet}）…");
+                var rr = await RunWineAsync(rawArgs);
                 ok = rr.Output.Contains("__WINE_EXIT=0"); detail = rr.Output + rr.Error;
             }
 
