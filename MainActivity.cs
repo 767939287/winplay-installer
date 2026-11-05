@@ -1633,7 +1633,7 @@ echo __WINE_EXIT=$RC
             try
             {
                 string docId = null;
-                try { docId = Android.Providers.DocumentsContract.GetDocumentId(uri); }
+                try { docId = Android.Provider.DocumentsContract.GetDocumentId(uri); }
                 catch { /* 非 documents provider（媒体库等）会抛异常，回退到 LastPathSegment */ }
                 if (string.IsNullOrEmpty(docId)) docId = uri.LastPathSegment;
                 if (string.IsNullOrEmpty(docId)) return null;
