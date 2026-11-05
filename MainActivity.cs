@@ -52,7 +52,6 @@ namespace WinPlayInstaller
         EditText _name;
         EditText _mainExe;
         EditText _quietArgs;
-        Button _pickBtn;
         Button _autoBtn;
         Button _wizardBtn;
         Button _zipBtn;
@@ -60,7 +59,6 @@ namespace WinPlayInstaller
         Button _launchBtn;
         Button _steamBtn;
         EditText _pathInput;
-        Button _pathBtn;
         Button _fixBtn;
         EditText _fbDesc;
 
@@ -116,7 +114,7 @@ namespace WinPlayInstaller
             pInstall.AddView(_quietArgs);
 
             _autoBtn = new Button(this) { Text = "② 自动安装 + 创建快捷方式（root，首选）", Enabled = false };
-            _autoBtn.Click += (s, e) => RunAutoInstall();
+            _autoBtn.Click += (s, e) => _ = RunAutoInstall();
             pInstall.AddView(_autoBtn);
 
             _wizardBtn = new Button(this) { Text = "③ 引擎图形安装向导（静默失败时用）", Enabled = false };
@@ -124,14 +122,14 @@ namespace WinPlayInstaller
             pInstall.AddView(_wizardBtn);
 
             _zipBtn = new Button(this) { Text = "④ zip 便携版解压到容器（免安装绿色软件）", Enabled = false };
-            _zipBtn.Click += (s, e) => RunZipExtract();
+            _zipBtn.Click += (s, e) => _ = RunZipExtract();
             pInstall.AddView(_zipBtn);
 
             _mainExe = new EditText(this) { Hint = "⑤ 主程序路径（自动识别；可改，如 C:\\VSCode\\Code.exe）", TextSize = 13f };
             pInstall.AddView(_mainExe);
 
             _shortcutBtn = new Button(this) { Text = "⑥ 创建桌面快捷方式", Enabled = false };
-            _shortcutBtn.Click += (s, e) => CreateShortcutAsync(_name.Text?.Trim(), GetMainPath());
+            _shortcutBtn.Click += (s, e) => _ = CreateShortcutAsync(_name.Text?.Trim(), GetMainPath());
             pInstall.AddView(_shortcutBtn);
 
             _launchBtn = new Button(this) { Text = "⑦ 直接启动（工作目录 = exe 所在文件夹）", Enabled = false };
@@ -161,7 +159,7 @@ namespace WinPlayInstaller
             pInstall.AddView(_pathInput);
 
             var pathBtn = new Button(this) { Text = "用上面路径安装" };
-            pathBtn.Click += (s, e) => InstallByPath();
+            pathBtn.Click += (s, e) => _ = InstallByPath();
             pInstall.AddView(pathBtn);
 
             // ---- 页 2：工具 ----
@@ -171,11 +169,11 @@ namespace WinPlayInstaller
             pTools.AddView(tipT);
 
             _steamBtn = new Button(this) { Text = "⑧ 一键添加 Steam 桌面快捷方式" };
-            _steamBtn.Click += (s, e) => AddSteamShortcut();
+            _steamBtn.Click += (s, e) => _ = AddSteamShortcut();
             pTools.AddView(_steamBtn);
 
             _fixBtn = new Button(this) { Text = "⑨ 引擎启动修复（初始化失败/卡99%时点这里）" };
-            _fixBtn.Click += (s, e) => FixEngineStart();
+            _fixBtn.Click += (s, e) => _ = FixEngineStart();
             pTools.AddView(_fixBtn);
 
             var tipFix = new TextView(this) { Text = "⑨ 会先清理残留 wine 会话（防引擎冷启动 NPE），再触发引擎官方初始化入口。", TextSize = 12f };
@@ -185,7 +183,7 @@ namespace WinPlayInstaller
             // ---- 页 3：日志与反馈 ----
             var pLog = new LinearLayout(this) { Orientation = Orientation.Vertical };
             var exportBtn = new Button(this) { Text = "⑩ 导出详细日志（含 root 通信/wine 调用全过程）" };
-            exportBtn.Click += (s, e) => ExportLog();
+            exportBtn.Click += (s, e) => _ = ExportLog();
             pLog.AddView(exportBtn);
 
             var fbTitle = new TextView(this) { Text = "── 问题反馈（自动创建 GitHub Issue）──", TextSize = 14f };
@@ -196,7 +194,7 @@ namespace WinPlayInstaller
             pLog.AddView(_fbDesc);
 
             var fbSend = new Button(this) { Text = "⑪ 生成反馈并打开 GitHub 提交页（你登录后点击提交即可）" };
-            fbSend.Click += (s, e) => OpenFeedbackSubmit();
+            fbSend.Click += (s, e) => _ = OpenFeedbackSubmit();
             pLog.AddView(fbSend);
 
             var fbCopy = new Button(this) { Text = "复制反馈内容到剪贴板（无 Token 时用）" };
@@ -209,6 +207,10 @@ namespace WinPlayInstaller
             pTools.Visibility = Android.Views.ViewStates.Gone;
             pLog.Visibility = Android.Views.ViewStates.Gone;
             var contentScroll = new ScrollView(this) { LayoutParameters = new LinearLayout.LayoutParams(-1, 0, 1f), FillViewport = true };
+            // 关掉边缘拉伸光效与滚动条，让手指拖动更跟手；过度滚动会把一次惯性滑动提前截断
+            contentScroll.OverScrollMode = Android.Views.OverScrollMode.Never;
+            contentScroll.VerticalScrollBarEnabled = false;
+            contentScroll.SmoothScrollingEnabled = true;
             contentScroll.AddView(pages);
             left.AddView(contentScroll);
 
@@ -235,6 +237,9 @@ namespace WinPlayInstaller
                 pLog.Visibility = idx == 2 ? Android.Views.ViewStates.Visible : Android.Views.ViewStates.Gone;
                 for (int i = 0; i < 3; i++)
                     tabViews[i].label.SetTextColor(i == idx ? active : inactive);
+
+                // 三个页面共用一个 ScrollView，不重置会停在上一页的滚动位置、看起来像内容丢失
+                contentScroll.ScrollTo(0, 0);
             }
             for (int i = 0; i < 3; i++)
             {
@@ -254,8 +259,13 @@ namespace WinPlayInstaller
             _log = new TextView(this) { TextSize = 11f, Text = "就绪。\n" };
             _log.SetTextColor(Color.Rgb(20, 80, 20));
             var logScroll = new ScrollView(this) { LayoutParameters = new LinearLayout.LayoutParams(-1, 0, 1f) };
+            // 日志面板同样关掉过度滚动效果：自动滚底与手动滑行不会互相打断
+            logScroll.OverScrollMode = Android.Views.OverScrollMode.Never;
+            logScroll.VerticalScrollBarEnabled = false;
+            logScroll.SmoothScrollingEnabled = true;
             logScroll.AddView(_log);
             right.AddView(logScroll);
+            _logScroll = logScroll;   // 提升为字段，供 Log 自动滚底使用
 
             root.AddView(left);
             root.AddView(right);
@@ -360,7 +370,8 @@ namespace WinPlayInstaller
                 {
                     using (cursor)
                     {
-                        var idx = cursor.GetColumnIndex(Android.Provider.OpenableColumns.DisplayName);
+                        // OpenableColumns 在较新绑定里被标记过时，改用等价平台字符串常量（值与原属性完全一致）
+                        var idx = cursor.GetColumnIndex("_display_name");
                         if (idx >= 0 && cursor.MoveToFirst()) return cursor.GetString(idx);
                     }
                 }
@@ -1148,7 +1159,15 @@ echo __WINE_EXIT=$RC
             return bmp;
         }
 
-        void Log(string msg) => RunOnUiThread(() => _log.Append($"[{DateTime.Now:HH:mm:ss}] {msg}\n"));
+        /// <summary>向日志面板追加一行带时间戳的日志，并在开启自动滚底时把面板滚动到末尾。</summary>
+        /// <param name="msg">日志正文，不含时间戳前缀。</param>
+        void Log(string msg) => RunOnUiThread(() =>
+        {
+            _log.Append($"[{DateTime.Now:HH:mm:ss}] {msg}\n");
+            // 面板只 Append 不会跟随，日志超过一屏后用户永远看到开头几行，像「日志卡住」
+            if (AppCatalog.AutoScrollLog && _logScroll != null)
+                _logScroll.Post(() => _logScroll.FullScroll(Android.Views.FocusSearchDirection.Down));
+        });
 
         // ==================== 程序清单 / 最近使用 / 目录映射 界面 ====================
 
